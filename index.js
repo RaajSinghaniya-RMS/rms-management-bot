@@ -23,7 +23,7 @@ bot.command("start", (ctx) => ctx.reply("Welcome! Use /watch to earn points and 
 // Watch Ad Command
 bot.command("watch", async (ctx) => {
     const keyboard = new InlineKeyboard()
-        .url("Watch Ad 📺", "https://your-ad-link.com") // Yahan apna ad link dalein
+        .url("Watch Ad 📺", "https://www.effectivegatecpm.com/ieik85vff?key=d58462324f8afb5e36d3fade6811af49") // Yahan apna ad link dalein
         .row()
         .text("Verify ✅", "verify");
     await ctx.reply("Ad dekhne ke baad Verify button dabayein!", { reply_markup: keyboard });
