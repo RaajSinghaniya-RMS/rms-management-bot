@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 require("dotenv").config();
 
 const bot = new Bot(process.env.BOT_TOKEN);
+const ADMIN_ID = process.env.ADMIN_ID;
 const GROUP_ID = process.env.GROUP_ID;
 
 mongoose.connect(process.env.MONGO_URL).then(() => console.log("DB Connected! ✅"));
@@ -25,110 +26,146 @@ const adLinks = [
     "https://www.effectivegatecpm.com/ieik85vff?key=d58462324f8afb5e36d3fade6811af49"
 ];
 
-// --- COMMAND SUGGESTIONS LOGIC ---
-// This will set different menus for Admin and Users
-async function setBotCommands() {
-    // Commands for everyone
+// --- COMMANDS SETUP ---
+async function setupCommands() {
     await bot.api.setMyCommands([
         { command: "watch", description: "Watch ads to earn points" },
-        { command: "status", description: "Check your points & rank" },
-        { command: "leaderboard", description: "Top 10 users list" },
-        { command: "help", description: "Lucky draw & Reward info" }
+        { command: "status", description: "Check your points" },
+        { command: "leaderboard", description: "Top users" },
+        { command: "help", description: "Reward details" }
     ]);
-
-    // Commands only for Admin
+    // Admin specific menu
     await bot.api.setMyCommands([
-        { command: "admin", description: "Open Admin Control Panel" },
-        { command: "setpoints", description: "Set custom points for a user" },
-        { command: "search", description: "Search/Manage user by ID" },
+        { command: "admin", description: "Open Admin Panel" },
+        { command: "search", description: "Search User by ID" },
+        { command: "setpoints", description: "Set points manually" },
         { command: "watch", description: "Watch ads" },
-        { command: "help", description: "Reward info" }
-    ], { scope: { type: "chat", chat_id: parseInt(process.env.ADMIN_ID) } });
+        { command: "help", description: "Reward details" }
+    ], { scope: { type: "chat", chat_id: parseInt(ADMIN_ID) } });
 }
-setBotCommands();
+setupCommands();
 
-// --- HELP MESSAGE CONTENT ---
-const helpText = `🎁 **RMS LUCKY DRAW & REWARDS** 🎁\n\n` +
-    `By watching ads and increasing your points, you qualify for our monthly Lucky Draw!\n\n` +
-    `🏆 **Prizes:**\n` +
-    `One lucky user from the Top List will be selected to win:\n` +
-    `✅ **1 Month or 3 Months Recharge**\n` +
-    `✅ Supported: **Funcam / Ashare / Forever**\n\n` +
-    `Keep watching to stay on top! Use /watch to start.`;
+const helpText = `🎁 **RMS LUCKY DRAW & REWARDS** 🎁\n\nTop users qualify for monthly lucky draws for **Funcam / Ashare / Forever** recharges! Keep watching ads to stay on top.`;
 
-bot.command("help", (ctx) => ctx.reply(helpText));
+// --- ALL CALLBACK HANDLERS (ADMIN PANEL LOGIC) ---
+bot.on("callback_query:data", async (ctx) => {
+    const data = ctx.callbackQuery.data;
+    if (ctx.from.id.toString() !== ADMIN_ID) return ctx.answerCallbackQuery("Unauthorized!");
 
-// Trigger help on Group Join
-bot.on("message:new_chat_members", async (ctx) => {
-    await ctx.reply(`Welcome ${ctx.message.new_chat_members[0].first_name}! 👋\n\n${helpText}`);
+    try {
+        if (data === "admin_top") {
+            const topUsers = await User.find().sort({ points: -1 }).limit(10);
+            const kb = new InlineKeyboard();
+            topUsers.forEach(u => kb.text(`${u.username || u.userId} (${u.points})`, `manage_${u.userId}`).row());
+            kb.text("⬅️ Back", "admin_main");
+            return await ctx.editMessageText("🏆 **Top 10 Users:**", { reply_markup: kb });
+        }
+
+        if (data === "admin_search") {
+            return await ctx.editMessageText("🔍 Use `/search [User_ID]` to find or add any user.");
+        }
+
+        if (data === "admin_main") {
+            const kb = new InlineKeyboard().text("🏆 Top 10", "admin_top").text("🔍 Search ID", "admin_search");
+            return await ctx.editMessageText("🛠 **RMS ADMIN PANEL**", { reply_markup: kb });
+        }
+
+        if (data.startsWith("manage_")) {
+            const targetId = data.split("_")[1];
+            const kb = new InlineKeyboard()
+                .text("+10", `pts_add_10_${targetId}`).text("+5", `pts_add_5_${targetId}`).row()
+                .text("-10", `pts_sub_10_${targetId}`).text("-5", `pts_sub_5_${targetId}`).row()
+                .text("⬅️ Back", "admin_top");
+            return await ctx.editMessageText(`👤 Managing ID: \`${targetId}\`\nModify points:`, { reply_markup: kb, parse_mode: "Markdown" });
+        }
+
+        if (data.startsWith("pts_")) {
+            const [, action, amount, targetId] = data.split("_");
+            const change = action === "add" ? parseInt(amount) : -parseInt(amount);
+            const user = await User.findOneAndUpdate({ userId: targetId }, { $inc: { points: change } }, { new: true });
+            
+            const kb = new InlineKeyboard()
+                .text("+10", `pts_add_10_${targetId}`).text("+5", `pts_add_5_${targetId}`).row()
+                .text("-10", `pts_sub_10_${targetId}`).text("-5", `pts_sub_5_${targetId}`).row()
+                .text("⬅️ Back", "admin_top");
+            
+            await ctx.answerCallbackQuery(`Updated: ${user.points} pts`);
+            return await ctx.editMessageText(`👤 User: \`${targetId}\`\n✅ Points: **${user.points}**`, { reply_markup: kb, parse_mode: "Markdown" });
+        }
+        
+        // Handle "verify" from watch command
+        if (data === "verify") {
+            let user = await User.findOne({ userId: ctx.from.id });
+            const timePassed = (Date.now() - user.lastClick) / 1000;
+            const target = user.fromGroupId || GROUP_ID;
+
+            if (timePassed < user.requiredWait) {
+                const rem = Math.ceil(user.requiredWait - timePassed);
+                if (target) await bot.api.sendMessage(target, `⚠️ @${ctx.from.username} failed! ${rem}s early.`);
+                return ctx.answerCallbackQuery({ text: `Wait ${rem}s!`, show_alert: true });
+            }
+
+            user.points += 1; user.lastClick = 0; await user.save();
+            if (target) await bot.api.sendMessage(target, `✅ @${ctx.from.username} success! Points: ${user.points}`);
+            await ctx.answerCallbackQuery("Success! Points added.");
+            return await ctx.editMessageText("Task Completed! ✅");
+        }
+    } catch (e) { console.log(e); }
 });
 
-// --- CORE LOGIC (Watch, Verify, Admin) ---
+// --- COMMANDS ---
 
-bot.command("start", (ctx) => ctx.reply("RMS Bot is ready! Use /help to see rewards."));
+bot.command("admin", (ctx) => {
+    if (ctx.from.id.toString() !== ADMIN_ID) return;
+    const kb = new InlineKeyboard().text("🏆 Top 10", "admin_top").text("🔍 Search ID", "admin_search");
+    ctx.reply("🛠 **RMS ADMIN PANEL**", { reply_markup: kb });
+});
+
+bot.command("search", async (ctx) => {
+    if (ctx.from.id.toString() !== ADMIN_ID) return;
+    const tId = ctx.match;
+    if (!tId) return ctx.reply("Format: `/search 12345`", { parse_mode: "Markdown" });
+    let user = await User.findOne({ userId: tId }) || await User.create({ userId: tId, username: "User_"+tId });
+    const kb = new InlineKeyboard().text("+5", `pts_add_5_${tId}`).text("-5", `pts_sub_5_${tId}`);
+    ctx.reply(`User: ${user.username}\nPoints: ${user.points}`, { reply_markup: kb });
+});
+
+bot.command("setpoints", async (ctx) => {
+    if (ctx.from.id.toString() !== ADMIN_ID) return;
+    const args = ctx.match.split(" ");
+    if (args.length < 2) return ctx.reply("Format: `/setpoints ID Points`", { parse_mode: "Markdown" });
+    await User.findOneAndUpdate({ userId: args[0] }, { points: parseInt(args[1]) });
+    ctx.reply(`✅ Set ${args[0]} to ${args[1]} points.`);
+    ctx.deleteMessage().catch(() => {});
+});
 
 bot.command("watch", async (ctx) => {
     const isGroup = ctx.chat.type !== "private";
     const userId = ctx.from.id;
-    const randomTime = Math.floor(Math.random() * 30) + 15;
-    const adLink = adLinks[Math.floor(Math.random() * adLinks.length)];
-
-    let user = await User.findOne({ userId });
-    if (!user) user = await User.create({ userId, username: ctx.from.username || ctx.from.first_name });
-
+    const wait = Math.floor(Math.random() * 20) + 15;
+    const link = adLinks[Math.floor(Math.random() * adLinks.length)];
+    
+    let user = await User.findOne({ userId }) || await User.create({ userId, username: ctx.from.username || ctx.from.first_name });
     user.fromGroupId = isGroup ? ctx.chat.id.toString() : user.fromGroupId;
-    user.lastClick = Date.now();
-    user.requiredWait = randomTime;
-    await user.save();
+    user.lastClick = Date.now(); user.requiredWait = wait; await user.save();
 
-    const kb = new InlineKeyboard().webApp("Watch Ad 📺", adLink).row().text("Verify Ad ✅", "verify");
-
+    const kb = new InlineKeyboard().webApp("Watch Ad 📺", link).row().text("Verify Ad ✅", "verify");
     if (isGroup) {
         try {
-            await bot.api.sendMessage(userId, `📺 **Task Started!**\nDuration: ${randomTime}s`, { reply_markup: kb });
-            await ctx.reply(`✅ @${ctx.from.username}, Ad link sent to your DM!`);
-        } catch (e) {
-            await ctx.reply(`❌ @${ctx.from.username}, please start the bot in private first!`);
-        }
+            await bot.api.sendMessage(userId, `📺 Ad Duration: ${wait}s`, { reply_markup: kb });
+            await ctx.reply(`✅ @${ctx.from.username}, Ad link sent in DM!`);
+        } catch (e) { await ctx.reply("❌ Please start the bot in private first!"); }
     } else {
-        await ctx.reply(`📺 **Duration:** ${randomTime}s`, { reply_markup: kb });
+        await ctx.reply(`📺 Ad Duration: ${wait}s`, { reply_markup: kb });
     }
-});
-
-bot.on("callback_query:data", async (ctx) => {
-    if (ctx.callbackQuery.data === "verify") {
-        let user = await User.findOne({ userId: ctx.from.id });
-        const timePassed = (Date.now() - user.lastClick) / 1000;
-        const groupTarget = user.fromGroupId || process.env.GROUP_ID;
-
-        if (timePassed < user.requiredWait) {
-            const rem = Math.ceil(user.requiredWait - timePassed);
-            if (groupTarget) await bot.api.sendMessage(groupTarget, `⚠️ **FAILED:** @${ctx.from.username} early verify (${rem}s left).`);
-            return ctx.answerCallbackQuery({ text: `Wait ${rem}s!`, show_alert: true });
-        }
-
-        user.points += 1;
-        user.lastClick = 0;
-        await user.save();
-        
-        if (groupTarget) await bot.api.sendMessage(groupTarget, `✅ **SUCCESS:** @${ctx.from.username} task complete! Points: ${user.points}`);
-        await ctx.answerCallbackQuery({ text: "Success! Check group.", show_alert: true });
-        await ctx.editMessageText("Task Completed! ✅");
-    }
-});
-
-// Admin Panel Command
-bot.command("admin", async (ctx) => {
-    if (ctx.from.id.toString() !== process.env.ADMIN_ID) return;
-    const kb = new InlineKeyboard().text("🏆 Top 10", "admin_top").text("🔍 Search ID", "admin_search");
-    await ctx.reply("🛠 RMS ADMIN PANEL", { reply_markup: kb });
 });
 
 bot.command("status", async (ctx) => {
     const user = await User.findOne({ userId: ctx.from.id });
-    if (!user) return ctx.reply("No points yet. Use /watch!");
-    ctx.reply(`👤 **User:** @${user.username}\n📊 **Points:** ${user.points}\n🎖️ **Rank:** ${user.rank}`);
+    if (!user) return ctx.reply("No data.");
+    ctx.reply(`👤 @${user.username}\n📊 Points: ${user.points}`);
 });
 
-bot.catch((err) => console.error(err));
+bot.command("help", (ctx) => ctx.reply(helpText));
+
 bot.start();
