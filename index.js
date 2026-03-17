@@ -21,7 +21,7 @@ const User = mongoose.model("User", {
     fromGroupId: String
 });
 
-// 4. All 5 Ads Links
+// 4. All Ads Links
 const adLinks = [
     "https://www.effectivegatecpm.com/yw8cx1x13?key=db61c612d8fd01748bd4401f2323fd8f",
     "https://www.effectivegatecpm.com/kb96c0gieh?key=6b9065c47c1e21512fe3e8bced33144a",
@@ -36,133 +36,142 @@ setInterval(async () => {
         if (GROUP_ID) {
             await bot.api.sendMessage(GROUP_ID, "📢 **Reminder:** Watch ads now to boost your ranking and win Lucky Draw rewards! Type /watch to start. 🚀");
         }
-    } catch (e) { console.log("Broadcast error"); }
+    } catch (e) { console.log("Broadcast error skipping..."); }
 }, 2 * 60 * 60 * 1000);
 
-// 6. Commands Suggestion Menu
-async function setMenu() {
+// 6. Admin Buttons Generator
+function createPointButtons(tId) {
+    return new InlineKeyboard()
+        .text("+5", `pts_add_5_${tId}`).text("+10", `pts_add_10_${tId}`).text("+20", `pts_add_20_${tId}`).row()
+        .text("+50", `pts_add_50_${tId}`).text("+100", `pts_add_100_${tId}`).text("+500", `pts_add_500_${tId}`).row()
+        .text("+1k", `pts_add_1000_${tId}`).text("+5k", `pts_add_5000_${tId}`).text("+10k", `pts_add_10000_${tId}`).row()
+        .text("+100k", `pts_add_100000_${tId}`).row()
+        .text("-5", `pts_sub_5_${tId}`).text("-10", `pts_sub_10_${tId}`).text("-20", `pts_sub_20_${tId}`).row()
+        .text("-50", `pts_sub_50_${tId}`).text("-100", `pts_sub_100_${tId}`).text("-500", `pts_sub_500_${tId}`).row()
+        .text("-1k", `pts_sub_1000_${tId}`).text("-5k", `pts_sub_5000_${tId}`).text("-10k", `pts_sub_10000_${tId}`).row()
+        .text("-100k", `pts_sub_100000_${tId}`).row()
+        .text("⬅️ Back to List", "admin_top");
+}
+
+// 7. Command Suggestions Setup
+async function setBotMenu() {
     await bot.api.setMyCommands([
         { command: "watch", description: "Watch ads to earn points" },
         { command: "status", description: "Check your points" },
         { command: "leaderboard", description: "Top users list" },
-        { command: "help", description: "Lucky draw & Reward info" }
+        { command: "help", description: "Lucky draw info" }
     ]);
     await bot.api.setMyCommands([
         { command: "admin", description: "Open Admin Panel" },
-        { command: "search", description: "Find user by ID" },
+        { command: "search", description: "Top 20 / Search User" },
+        { command: "setpoints", description: "Set exact points manually" },
         { command: "watch", description: "Watch ads" },
         { command: "help", description: "Reward info" }
     ], { scope: { type: "chat", chat_id: parseInt(ADMIN_ID) } });
 }
-setMenu();
+setBotMenu();
 
-// 7. Lucky Draw Help Content
-const helpText = `🎁 **RMS LUCKY DRAW & REWARDS** 🎁\n\n` +
-    `Increase your points to qualify for our monthly Lucky Draw!\n\n` +
-    `🏆 **Prizes:**\n` +
-    `Top users can win:\n` +
-    `✅ **1-3 Months Recharge** (Funcam/Ashare/Forever)\n\n` +
-    `Use /watch to start earning points now!`;
-
-// --- MAIN LOGIC & CALLBACKS ---
+// --- LOGIC & CALLBACKS ---
 
 bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
-    const isAd = data === "verify";
-    
-    // ADMIN ACTIONS
-    if (!isAd) {
-        if (ctx.from.id.toString() !== ADMIN_ID) return ctx.answerCallbackQuery("Admin only!");
-        try {
-            if (data === "admin_top") {
-                const top = await User.find().sort({ points: -1 }).limit(10);
-                const kb = new InlineKeyboard();
-                top.forEach(u => kb.text(`${u.username || u.userId} (${u.points})`, `manage_${u.userId}`).row());
-                kb.text("⬅️ Back", "admin_main");
-                return await ctx.editMessageText("🏆 **Top Users:**", { reply_markup: kb });
-            }
-            if (data === "admin_main") {
-                const kb = new InlineKeyboard().text("🏆 Top 10", "admin_top").text("🔍 Search ID", "admin_search");
-                return await ctx.editMessageText("🛠 **RMS ADMIN PANEL**", { reply_markup: kb });
-            }
-            if (data.startsWith("manage_")) {
-                const tId = data.split("_")[1];
-                const kb = new InlineKeyboard()
-                    .text("+10", `pts_add_10_${tId}`).text("+5", `pts_add_5_${tId}`).row()
-                    .text("-10", `pts_sub_10_${tId}`).text("-5", `pts_sub_5_${tId}`).row()
-                    .text("⬅️ Back", "admin_top");
-                return await ctx.editMessageText(`👤 User: \`${tId}\`\nUpdate Points:`, { reply_markup: kb, parse_mode: "Markdown" });
-            }
-            if (data.startsWith("pts_")) {
-                const [, action, amount, tId] = data.split("_");
-                const val = action === "add" ? parseInt(amount) : -parseInt(amount);
-                const updated = await User.findOneAndUpdate({ userId: tId }, { $inc: { points: val } }, { new: true });
-                await ctx.answerCallbackQuery(`Updated to ${updated.points} pts`);
-                const kb = new InlineKeyboard()
-                    .text("+10", `pts_add_10_${tId}`).text("+5", `pts_add_5_${tId}`).row()
-                    .text("-10", `pts_sub_10_${tId}`).text("-5", `pts_sub_5_${tId}`).row()
-                    .text("⬅️ Back", "admin_top");
-                return await ctx.editMessageText(`👤 User: \`${tId}\`\n✅ Current Points: **${updated.points}**`, { reply_markup: kb, parse_mode: "Markdown" });
-            }
-        } catch (e) { console.log(e); }
-    }
+    if (ctx.from.id.toString() !== ADMIN_ID && !data.includes("verify")) return ctx.answerCallbackQuery("Unauthorized!");
 
-    // USER VERIFY ACTION
-    if (isAd) {
-        let user = await User.findOne({ userId: ctx.from.id });
-        const timePassed = (Date.now() - user.lastClick) / 1000;
-        const target = user.fromGroupId || GROUP_ID;
-
-        if (timePassed < user.requiredWait) {
-            const rem = Math.ceil(user.requiredWait - timePassed);
-            if (target) await bot.api.sendMessage(target, `⚠️ @${ctx.from.username} failed! ${rem}s remaining.`);
-            return ctx.answerCallbackQuery({ text: `Wait ${rem}s! Report sent.`, show_alert: true });
+    try {
+        if (data === "admin_top" || data === "admin_main") {
+            const top = await User.find().sort({ points: -1 }).limit(20);
+            const kb = new InlineKeyboard();
+            top.forEach(u => kb.text(`${u.username || u.userId} (${u.points})`, `manage_${u.userId}`).row());
+            kb.text("🔍 Manual Search ID", "admin_search");
+            return await ctx.editMessageText("🏆 **RMS Admin - Select User:**", { reply_markup: kb });
         }
-
-        user.points += 1; user.lastClick = 0; await user.save();
-        if (target) await bot.api.sendMessage(target, `✅ @${ctx.from.username} success! +1 Point added.`);
-        await ctx.answerCallbackQuery("Success! Point added.");
-        return await ctx.editMessageText("Task Completed! ✅");
-    }
+        if (data === "admin_search") return await ctx.editMessageText("🔍 Use `/search [User_ID]` to find someone specific.");
+        
+        if (data.startsWith("manage_")) {
+            const tId = data.split("_")[1];
+            return await ctx.editMessageText(`👤 **Managing:** \`${tId}\`\nUpdate Points:`, { reply_markup: createPointButtons(tId), parse_mode: "Markdown" });
+        }
+        if (data.startsWith("pts_")) {
+            const [, action, amount, tId] = data.split("_");
+            const val = action === "add" ? parseInt(amount) : -parseInt(amount);
+            const user = await User.findOneAndUpdate({ userId: tId }, { $inc: { points: val } }, { new: true });
+            await ctx.answerCallbackQuery(`Updated to ${user.points} pts`);
+            return await ctx.editMessageText(`👤 **User:** \`${tId}\`\n✅ **Current Points:** **${user.points}**`, { reply_markup: createPointButtons(tId), parse_mode: "Markdown" });
+        }
+        if (data === "verify") {
+            let user = await User.findOne({ userId: ctx.from.id });
+            const timePassed = (Date.now() - user.lastClick) / 1000;
+            const target = user.fromGroupId || GROUP_ID;
+            if (timePassed < user.requiredWait) {
+                const rem = Math.ceil(user.requiredWait - timePassed);
+                if (target) await bot.api.sendMessage(target, `⚠️ @${ctx.from.username} failed early verify!`);
+                return ctx.answerCallbackQuery({ text: `Wait ${rem}s!`, show_alert: true });
+            }
+            user.points += 1; user.lastClick = 0; await user.save();
+            if (target) await bot.api.sendMessage(target, `✅ @${ctx.from.username} success! +1 Point added.`);
+            await ctx.answerCallbackQuery("Success!");
+            return await ctx.editMessageText("Task Completed! ✅");
+        }
+    } catch (e) { console.log(e); }
 });
 
 // --- COMMANDS ---
 
-bot.command("start", (ctx) => ctx.reply("RMS Bot is online! Use /help for rewards info."));
+bot.command("start", (ctx) => ctx.reply("RMS Bot is online! Use /help to see prizes."));
 
-bot.command("help", (ctx) => ctx.reply(helpText));
+bot.command("help", (ctx) => ctx.reply("🎁 **REWARDS INFO:**\nTop users win monthly recharges for Funcam/Ashare/Forever! \n\nWe select 1 user from the Top List every month."));
+
+bot.command("search", async (ctx) => {
+    if (ctx.from.id.toString() !== ADMIN_ID) return;
+    const tId = ctx.match;
+    if (!tId) {
+        const top = await User.find().sort({ points: -1 }).limit(20);
+        const kb = new InlineKeyboard();
+        top.forEach(u => kb.text(`${u.username || u.userId} (${u.points})`, `manage_${u.userId}`).row());
+        return ctx.reply("🏆 **Top 20 Users List:**", { reply_markup: kb });
+    }
+    let user = await User.findOne({ userId: tId }) || await User.create({ userId: tId, username: "Manual_Entry" });
+    ctx.reply(`👤 **Found:** ${user.username}\n📊 **Points:** ${user.points}`, { reply_markup: createPointButtons(tId) });
+});
+
+bot.command("admin", (ctx) => {
+    if (ctx.from.id.toString() !== ADMIN_ID) return;
+    const kb = new InlineKeyboard().text("🏆 Top 20 List", "admin_top").text("🔍 Search ID", "admin_search");
+    ctx.reply("🛠 **RMS ADMIN PANEL**", { reply_markup: kb });
+});
+
+bot.command("setpoints", async (ctx) => {
+    if (ctx.from.id.toString() !== ADMIN_ID) return;
+    const args = ctx.match.split(" ");
+    if (args.length < 2) return ctx.reply("Format: `/setpoints ID Points`", { parse_mode: "Markdown" });
+    await User.findOneAndUpdate({ userId: args[0] }, { points: parseInt(args[1]) });
+    ctx.reply(`✅ Updated ${args[0]} to ${args[1]} points.`);
+    ctx.deleteMessage().catch(() => {});
+});
 
 bot.command("watch", async (ctx) => {
     const isGroup = ctx.chat.type !== "private";
     const userId = ctx.from.id;
     const wait = Math.floor(Math.random() * 20) + 15;
     const link = adLinks[Math.floor(Math.random() * adLinks.length)];
-    
     let user = await User.findOne({ userId }) || await User.create({ userId, username: ctx.from.username || ctx.from.first_name });
     user.fromGroupId = isGroup ? ctx.chat.id.toString() : user.fromGroupId;
     user.lastClick = Date.now(); user.requiredWait = wait; await user.save();
-
     const kb = new InlineKeyboard().webApp("Watch Ad 📺", link).row().text("Verify Ad ✅", "verify");
     if (isGroup) {
         try {
-            await bot.api.sendMessage(userId, `📺 Ad Duration: ${wait}s\nWait for timer then verify.`, { reply_markup: kb });
+            await bot.api.sendMessage(userId, `📺 Ad Task Started!\nDuration: ${wait}s`, { reply_markup: kb });
             await ctx.reply(`✅ @${ctx.from.username}, Ad link sent in Private DM!`);
-        } catch (e) { await ctx.reply("❌ Start the bot in Private first!"); }
+        } catch (e) { await ctx.reply("❌ Please start the bot in private first!"); }
     } else {
         await ctx.reply(`📺 Ad Duration: ${wait}s`, { reply_markup: kb });
     }
 });
 
-bot.command("admin", (ctx) => {
-    if (ctx.from.id.toString() !== ADMIN_ID) return;
-    const kb = new InlineKeyboard().text("🏆 Top 10", "admin_top").text("🔍 Search ID", "admin_search");
-    ctx.reply("🛠 **RMS ADMIN PANEL**", { reply_markup: kb });
-});
-
 bot.command("status", async (ctx) => {
     const user = await User.findOne({ userId: ctx.from.id });
     if (!user) return ctx.reply("No data yet.");
-    ctx.reply(`👤 @${user.username}\n📊 Points: ${user.points}`);
+    ctx.reply(`👤 User: @${user.username}\n📊 Points: ${user.points}`);
 });
 
 bot.command("leaderboard", async (ctx) => {
