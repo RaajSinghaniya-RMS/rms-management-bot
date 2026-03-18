@@ -6,11 +6,11 @@ require("dotenv").config();
 const bot = new Bot(process.env.BOT_TOKEN);
 const ADMIN_ID = process.env.ADMIN_ID;
 const GROUP_ID = process.env.GROUP_ID;
-const BOT_USERNAME = "@YourBotUsername"; // 👈 Yahan apna username update karein
+const BOT_USERNAME = "@YourBotUsername"; // 👈 Yahan apna asli username update karein
 
 mongoose.connect(process.env.MONGO_URL).then(() => console.log("DB Connected! ✅"));
 
-// 2. User Schema
+// 2. Database Schema
 const User = mongoose.model("User", {
     userId: Number,
     username: String,
@@ -31,36 +31,7 @@ const adLinks = [
     "https://www.effectivegatecpm.com/ieik85vff?key=d58462324f8afb5e36d3fade6811af49"
 ];
 
-// --- 3. AUTO PROCESSES (Reminders & Leaderboard) ---
-
-// 2-Hour Attractive Reminder
-setInterval(async () => {
-    try {
-        if (GROUP_ID) {
-            const msg = `🔥 **EARN FREE RECHARGE NOW!** 🔥\n\n` +
-                `Don't let your server expire! Watch ads and collect points to win **Funcam/Forever** recharges.\n\n` +
-                `💎 **Current Prize:** 1-3 Months Premium Access\n` +
-                `🏆 **Criteria:** Min 200 Points for Contest Entry\n\n` +
-                `👉 Type /watch to start your journey!`;
-            await bot.api.sendMessage(GROUP_ID, msg, { parse_mode: "Markdown" });
-        }
-    } catch (e) { console.log("Broadcast error"); }
-}, 2 * 60 * 60 * 1000);
-
-// 5-Hour Auto Leaderboard
-setInterval(async () => {
-    try {
-        if (GROUP_ID) {
-            const top = await User.find().sort({ points: -1 }).limit(10);
-            let msg = `📊 **TOP RANKING - LIVE UPDATE** 📊\n\n`;
-            top.forEach((u, i) => msg += `${i + 1}. @${u.username || u.userId} — ${u.points} pts\n`);
-            msg += `\n✨ *Join the contest now! Earn 2 points per ad and get your free recharge!*`;
-            await bot.api.sendMessage(GROUP_ID, msg, { parse_mode: "Markdown" });
-        }
-    } catch (e) { console.log("LB error"); }
-}, 5 * 60 * 60 * 1000);
-
-// --- 4. ADMIN BUTTONS GENERATOR ---
+// 3. Admin Buttons (Full Range)
 function createPointButtons(tId) {
     return new InlineKeyboard()
         .text("+5", `pts_add_5_${tId}`).text("+10", `pts_add_10_${tId}`).text("+20", `pts_add_20_${tId}`).row()
@@ -74,12 +45,18 @@ function createPointButtons(tId) {
         .text("⬅️ Back", "admin_top");
 }
 
-// --- 5. LOGIC & HANDLERS ---
+// 4. Auto-Processes
+setInterval(async () => {
+    try {
+        if (GROUP_ID) {
+            await bot.api.sendMessage(GROUP_ID, `🔥 **ACTIVE GIVEAWAY!**\nWin FREE Recharges for Funcam/Forever! 🎁\n👉 Type /watch to join!`, { parse_mode: "Markdown" });
+        }
+    } catch (e) {}
+}, 2 * 60 * 60 * 1000);
 
+// --- CALLBACK HANDLERS ---
 bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
-    
-    // User Verify
     if (data === "verify") {
         let user = await User.findOne({ userId: ctx.from.id });
         const timePassed = (Date.now() - user.lastClick) / 1000;
@@ -87,7 +64,7 @@ bot.on("callback_query:data", async (ctx) => {
 
         if (timePassed < user.requiredWait) {
             const rem = Math.ceil(user.requiredWait - timePassed);
-            if (target) await bot.api.sendMessage(target, `❌ **Early Verify:** @${ctx.from.username} failed to watch full ad! (Skipped ${rem}s)`);
+            if (target) await bot.api.sendMessage(target, `❌ **Early Verify:** @${ctx.from.username} skipped ad! (${rem}s left)`);
             return ctx.answerCallbackQuery({ text: `🚨 Wait ${rem}s!`, show_alert: true });
         }
         user.points += 2; user.lastClick = 0; await user.save();
@@ -95,7 +72,6 @@ bot.on("callback_query:data", async (ctx) => {
         return ctx.editMessageText("✅ **Task Completed!** Points added.");
     }
 
-    // Admin Logic
     if (ctx.from.id.toString() !== ADMIN_ID) return;
     if (data === "admin_top") {
         const top = await User.find().sort({ points: -1 }).limit(20);
@@ -116,24 +92,26 @@ bot.on("callback_query:data", async (ctx) => {
     }
 });
 
+// --- COMMANDS ---
+bot.command("start", (ctx) => ctx.reply(`Welcome to RMS Rewards! 🎖️\n\nMin 200 pts for Contest Entry.`, { parse_mode: "Markdown" }));
+
 bot.command("daily", async (ctx) => {
     let user = await User.findOne({ userId: ctx.from.id }) || await User.create({ userId: ctx.from.id, username: ctx.from.username });
     const now = Date.now();
     const oneDay = 24 * 60 * 60 * 1000;
     const diff = now - user.lastDaily;
 
-    if (diff < oneDay) return ctx.reply(`⏳ Next claim in **${Math.ceil((oneDay - diff) / (60 * 60 * 1000))}h**.`);
+    if (diff < oneDay) return ctx.reply(`⏳ Wait ${Math.ceil((oneDay-diff)/(60*60*1000))}h.`);
 
     if (diff > 2 * oneDay) {
-        const missed = Math.floor(diff / oneDay) - 1;
+        const missed = Math.floor(diff/oneDay) - 1;
         let penalty = missed >= 10 ? 50 : missed * 5;
         user.points = Math.max(-100, user.points - penalty);
         ctx.reply(`⚠️ **Penalty:** Missed check-in! **-${penalty} Points**.`);
-        user.streak = 1;
-    } else { user.streak += 1; }
+    }
 
     user.points += 5; user.lastDaily = now; await user.save();
-    ctx.reply(`🔥 **Daily Bonus!** +5 Points. Streak: **${user.streak} Days**`);
+    ctx.reply(`🔥 **Daily Bonus!** +5 Points added.`);
 });
 
 bot.command("watch", async (ctx) => {
@@ -142,21 +120,16 @@ bot.command("watch", async (ctx) => {
             await bot.api.sendChatAction(ctx.from.id, "typing");
             await ctx.reply(`✅ @${ctx.from.username}, link sent in DM!`);
         } catch (e) {
-            return ctx.reply(`❌ **Start the bot in Private first!**\nClick ${BOT_USERNAME} and start to earn points.`);
+            return ctx.reply(`❌ **Start the bot first!**\nClick ${BOT_USERNAME} and press Start.`);
         }
     }
-    const wait = Math.floor(Math.random() * 20) + 20;
+    const wait = 25;
     const link = adLinks[Math.floor(Math.random() * adLinks.length)];
     let user = await User.findOne({ userId: ctx.from.id }) || await User.create({ userId: ctx.from.id, username: ctx.from.username });
     user.fromGroupId = (ctx.chat.type !== "private") ? ctx.chat.id.toString() : user.fromGroupId;
     user.lastClick = Date.now(); user.requiredWait = wait; await user.save();
     const kb = new InlineKeyboard().webApp("Watch Ad 📺", link).row().text("Verify Points ✅", "verify");
-    await bot.api.sendMessage(ctx.from.id, `📺 **Ad Task** (${wait}s)`, { reply_markup: kb });
-});
-
-bot.command("help", (ctx) => {
-    const helpMsg = `📜 **CONTEST RULES**\n\n1️⃣ **Ad:** +2 Pts\n2️⃣ **Daily:** +5 Pts\n3️⃣ **Entry:** 200 Pts Min.\n\n⚠️ **PENALTIES:**\n• Miss 1 Day: -5 Pts\n• Miss 10 Days: -50 Pts\n• Skip Ad: Public Report!`;
-    ctx.reply(helpMsg);
+    await bot.api.sendMessage(ctx.from.id, `📺 **Ad Task** (25s)`, { reply_markup: kb });
 });
 
 bot.command("admin", (ctx) => {
@@ -175,20 +148,7 @@ bot.command("search", async (ctx) => {
         return ctx.reply("🏆 **Top 20 List:**", { reply_markup: kb });
     }
     let user = await User.findOne({ userId: tId }) || await User.create({ userId: tId, username: "Manual_Entry" });
-    ctx.reply(`👤 **Found:** ${user.username}\n📊 **Points:** ${user.points}`, { reply_markup: createPointButtons(tId) });
-});
-
-bot.command("leaderboard", async (ctx) => {
-    const top = await User.find().sort({ points: -1 }).limit(10);
-    let msg = `🏆 **LEADERBOARD** 🏆\n\n`;
-    top.forEach((u, i) => msg += `${i+1}. @${u.username || u.userId} — ${u.points} pts\n`);
-    ctx.reply(msg);
-});
-
-bot.command("status", async (ctx) => {
-    const u = await User.findOne({ userId: ctx.from.id });
-    if (!u) return ctx.reply("Start with /watch!");
-    ctx.reply(`👤 @${u.username}\n📊 Points: ${u.points}\n🔥 Streak: ${u.streak} Days\n\n*Min 200 pts needed.*`);
+    ctx.reply(`👤 **User:** ${user.username}\n📊 **Points:** ${user.points}`, { reply_markup: createPointButtons(tId) });
 });
 
 bot.start();
