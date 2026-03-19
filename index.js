@@ -57,11 +57,11 @@ function createPointButtons(tId) {
         .text("⬅️ Back to List", "admin_top");
 }
 
-// 5. Auto-Broadcast (Every 2 Hours)
+// 5. Auto-Broadcast (Every 4 Hours)
 setInterval(async () => {
     try {
         if (GROUP_ID) {
-            await bot.api.sendMessage(GROUP_ID, `📣 **REMINDER:** Don't miss your chance to win a Free Recharge! 🎁\n👉 Type /watch to join the contest!`, { parse_mode: "Markdown" });
+            await bot.api.sendMessage(GROUP_ID, `📣 **REMINDER:** Don't miss your chance to win a Free Recharge for your Set Top Box! 🎁\n👉 Type /watch to join the contest!`, { parse_mode: "Markdown" });
         }
     } catch (e) {}
 }, 2 * 60 * 60 * 1000);
@@ -76,7 +76,7 @@ bot.on("callback_query:data", async (ctx) => {
 
         if (timePassed < user.requiredWait) {
             const rem = Math.ceil(user.requiredWait - timePassed);
-            if (target) await bot.api.sendMessage(target, `❌ **Early Verify:** @${ctx.from.username} skipped ad! (${rem}s left)`);
+            if (target) await bot.api.sendMessage(target, `❌ **Ad not completed:** @${ctx.from.username} skipped ad! No points added (${rem}s left)`);
             return ctx.answerCallbackQuery({ text: `🚨 Wait ${rem}s!`, show_alert: true });
         }
         user.points += 2; user.lastClick = 0; await user.save();
